@@ -313,7 +313,7 @@ QuicConnection::QuicConnection(
       multi_port_probing_alarm_(alarm_factory_->CreateAlarm(
           arena_.New<MultiPortProbingAlarmDelegate>(this), &arena_)),
       visitor_(nullptr),
-      debug_visitor_(nullptr),
+//      debug_visitor_(nullptr),
       packet_creator_(server_connection_id, &framer_, random_generator_, this),
       last_received_packet_info_(clock_->ApproximateNow()),
       sent_packet_manager_(perspective, clock_, random_generator_, &stats_,

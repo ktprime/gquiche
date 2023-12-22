@@ -75,7 +75,7 @@ QuicSession::QuicSession(
     std::unique_ptr<QuicDatagramQueue::Observer> datagram_observer)
     : connection_(connection),
       perspective_(connection->perspective()),
-      visitor_(owner),
+      //visitor_(owner),
       write_blocked_streams_(std::make_unique<QuicWriteBlockedList>()),
       config_(config),
       stream_id_manager_(perspective(), connection->transport_version(),

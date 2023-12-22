@@ -71,7 +71,7 @@ QuicSentPacketManager::QuicSentPacketManager(
       clock_(clock),
       random_(random),
       stats_(stats),
-      debug_delegate_(nullptr),
+      //debug_delegate_(nullptr),
       network_change_visitor_(nullptr),
       initial_congestion_window_(kInitialCongestionWindow),
       loss_algorithm_(&uber_loss_algorithm_),
@@ -1450,7 +1450,7 @@ AckResult QuicSentPacketManager::OnAckFrameEnd(
 }
 
 void QuicSentPacketManager::SetDebugDelegate(DebugDelegate* debug_delegate) {
-  debug_delegate_ = debug_delegate;
+  //debug_delegate_ = debug_delegate;
 }
 
 void QuicSentPacketManager::OnApplicationLimited() {

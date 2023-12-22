@@ -953,7 +953,7 @@ class QUICHE_EXPORT QuicSession
   Perspective perspective_;
 
   // May be null.
-  Visitor* visitor_;
+  constexpr static Visitor* visitor_ = nullptr;
 
   // A list of streams which need to write more data.  Stream register
   // themselves in their constructor, and unregisterm themselves in their

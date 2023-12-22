@@ -112,7 +112,7 @@ QuicPacketCreator::QuicPacketCreator(QuicConnectionId server_connection_id,
                                      QuicFramer* framer, QuicRandom* random,
                                      DelegateInterface* delegate)
     : delegate_(delegate),
-      debug_delegate_(nullptr),
+      //debug_delegate_(nullptr),
       framer_(framer),
       random_(random),
       have_diversification_nonce_(false),

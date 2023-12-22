@@ -614,7 +614,7 @@ class QUICHE_EXPORT QuicSentPacketManager {
   QuicRandom* random_;
   QuicConnectionStats* stats_;
 
-  DebugDelegate* debug_delegate_;
+  constexpr static DebugDelegate* debug_delegate_ = nullptr;
   NetworkChangeVisitor* network_change_visitor_;
   QuicPacketCount initial_congestion_window_;
   RttStats rtt_stats_;

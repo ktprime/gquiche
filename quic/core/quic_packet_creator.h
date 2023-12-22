@@ -415,7 +415,7 @@ class QUICHE_EXPORT QuicPacketCreator {
   QuicPacketNumber NextSendingPacketNumber() const;
 
   void set_debug_delegate(DebugDelegate* debug_delegate) {
-    debug_delegate_ = debug_delegate;
+    //debug_delegate_ = debug_delegate;
   }
 
   QuicByteCount pending_padding_bytes() const { return pending_padding_bytes_; }
@@ -613,7 +613,7 @@ class QUICHE_EXPORT QuicPacketCreator {
 
   // Does not own these delegates or the framer.
   DelegateInterface* delegate_;
-  DebugDelegate* debug_delegate_;
+  constexpr static DebugDelegate* debug_delegate_ = nullptr;
   QuicFramer* framer_;
   QuicRandom* random_;
 

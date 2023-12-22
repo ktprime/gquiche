@@ -806,7 +806,7 @@ class QUIC_EXPORT_PRIVATE QuicConnection final
     visitor_ = visitor;
   }
   void set_debug_visitor(QuicConnectionDebugVisitor* debug_visitor) {
-    debug_visitor_ = debug_visitor;
+    //debug_visitor_ = debug_visitor;
     sent_packet_manager_.SetDebugDelegate(debug_visitor);
   }
   // Used in Chromium, but not internally.
@@ -2166,7 +2166,7 @@ class QUIC_EXPORT_PRIVATE QuicConnection final
   QuicArenaScopedPtr<QuicAlarm> multi_port_probing_alarm_;
   // Neither visitor is owned by this class.
   QuicConnectionVisitorInterface* visitor_;
-  QuicConnectionDebugVisitor* debug_visitor_;
+  constexpr static QuicConnectionDebugVisitor* debug_visitor_ = nullptr;
 
   QuicPacketCreator packet_creator_;
 
