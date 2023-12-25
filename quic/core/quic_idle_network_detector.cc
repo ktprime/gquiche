@@ -71,7 +71,6 @@ void QuicIdleNetworkDetector::StopDetection() {
   alarm_->PermanentCancel();
   handshake_timeout_ = QuicTime::Delta::Infinite();
   idle_network_timeout_ = QuicTime::Delta::Infinite();
-  handshake_timeout_ = QuicTime::Delta::Infinite();
   stopped_ = true;
 }
 
@@ -119,7 +118,7 @@ void QuicIdleNetworkDetector::SetAlarm() {
       new_deadline = idle_network_deadline;
     }
   }
-  alarm_->Update(new_deadline, kAlarmGranularity);
+  alarm_->Update(new_deadline, QuicTime::Delta::FromSeconds(1));
 }
 
 void QuicIdleNetworkDetector::MaybeSetAlarmOnSentPacket(

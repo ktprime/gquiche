@@ -44,10 +44,6 @@ void QuicPingManager::SetAlarm(QuicTime now, bool should_keep_alive,
                                bool has_in_flight_packets) {
   UpdateDeadlines(now, should_keep_alive, has_in_flight_packets);
   const QuicTime earliest_deadline = GetEarliestDeadline();
-  if (!earliest_deadline.IsInitialized()) {
-    alarm_->Cancel();
-    return;
-  }
   if (earliest_deadline == keep_alive_deadline_) {
     // Use 1s granularity for keep-alive time.
     alarm_->Update(earliest_deadline, QuicTime::Delta::FromSeconds(1));
@@ -148,16 +144,9 @@ void QuicPingManager::UpdateDeadlines(QuicTime now, bool should_keep_alive,
 }
 
 QuicTime QuicPingManager::GetEarliestDeadline() const {
-  QuicTime earliest_deadline = QuicTime::Zero();
-  for (QuicTime t : {retransmittable_on_wire_deadline_, keep_alive_deadline_}) {
-    if (!t.IsInitialized()) {
-      continue;
-    }
-    if (!earliest_deadline.IsInitialized() || t < earliest_deadline) {
-      earliest_deadline = t;
-    }
-  }
-  return earliest_deadline;
+  QuicTime earliest_deadline = std::max(keep_alive_deadline_ - kAlarmGranularity,
+                                        retransmittable_on_wire_deadline_ - kAlarmGranularity);
+  return earliest_deadline + kAlarmGranularity;
 }
 
 }  // namespace quic

@@ -90,19 +90,11 @@ void QuicNetworkBlackholeDetector::RestartDetection(
 }
 
 QuicTime QuicNetworkBlackholeDetector::GetEarliestDeadline() const {
-  QuicTime result = QuicTime::Zero();
-  for (QuicTime t : {path_degrading_deadline_, blackhole_deadline_,
-                     path_mtu_reduction_deadline_}) {
-    if (!t.IsInitialized()) {
-      continue;
-    }
-
-    if (!result.IsInitialized() || t < result) {
-      result = t;
-    }
-  }
-
-  return result;
+ QuicTime result = std::max({ path_degrading_deadline_ - kAlarmGranularity,
+                               blackhole_deadline_ - kAlarmGranularity,
+                               path_mtu_reduction_deadline_ - kAlarmGranularity
+  });
+  return result + kAlarmGranularity;
 }
 
 QuicTime QuicNetworkBlackholeDetector::GetLastDeadline() const {
@@ -125,7 +117,7 @@ void QuicNetworkBlackholeDetector::UpdateAlarm() const {
                 << path_mtu_reduction_deadline_
                 << ", blackhole_deadline_:" << blackhole_deadline_;
 
-  alarm_->Update(next_deadline, kAlarmGranularity);
+  alarm_->Update(next_deadline, kAlarmGranularity * 10);
 }
 
 bool QuicNetworkBlackholeDetector::IsDetectionInProgress() const {
