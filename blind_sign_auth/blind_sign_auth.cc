@@ -47,11 +47,6 @@ constexpr absl::string_view kIssuerHostname =
 }  // namespace
 
 void BlindSignAuth::GetTokens(std::string oauth_token, int num_tokens,
-                              SignedTokenCallback callback) {
-  GetTokens(oauth_token, num_tokens, ProxyLayer::kProxyA, std::move(callback));
-}
-
-void BlindSignAuth::GetTokens(std::string oauth_token, int num_tokens,
                               ProxyLayer proxy_layer,
                               SignedTokenCallback callback) {
   // Create GetInitialData RPC.
@@ -306,7 +301,7 @@ void BlindSignAuth::GenerateRsaBssaTokens(
   }
   absl::StatusOr<
       anonymous_tokens::AnonymousTokensSignRequest>
-      at_sign_request = *bssa_client.value()->CreateRequest(plaintext_tokens);
+      at_sign_request = bssa_client.value()->CreateRequest(plaintext_tokens);
   if (!at_sign_request.ok()) {
     QUICHE_LOG(WARNING) << "Failed to create AT Sign Request: "
                         << at_sign_request.status();
@@ -527,9 +522,9 @@ void BlindSignAuth::PrivacyPassAuthAndSignCallback(
 
     privacy::ppn::PrivacyPassTokenData privacy_pass_token_data;
     privacy_pass_token_data.mutable_token()->assign(
-        absl::Base64Escape(*marshaled_token));
+        absl::WebSafeBase64Escape(*marshaled_token));
     privacy_pass_token_data.mutable_encoded_extensions()->assign(
-        absl::Base64Escape(encoded_extensions));
+        absl::WebSafeBase64Escape(encoded_extensions));
     privacy_pass_token_data.set_use_case_override(use_case);
     tokens_vec.push_back(BlindSignToken{
         privacy_pass_token_data.SerializeAsString(), public_key_expiry_time});

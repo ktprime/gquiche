@@ -13,7 +13,7 @@
 #include "quiche/http2/adapter/http2_protocol.h"
 #include "quiche/http2/adapter/http2_util.h"
 #include "quiche/http2/adapter/http2_visitor_interface.h"
-#include "quiche/http2/adapter/minimal_header_validator.h"
+#include "quiche/http2/adapter/noop_header_validator.h"
 #include "quiche/http2/adapter/oghttp2_util.h"
 #include "quiche/common/quiche_callbacks.h"
 #include "quiche/spdy/core/spdy_protocol.h"
@@ -210,8 +210,8 @@ OgHttp2Session::PassthroughHeadersHandler::PassthroughHeadersHandler(
       validator_->SetAllowDifferentHostAndAuthority();
     }
   } else {
-    QUICHE_VLOG(2) << "instantiating minimal header validator";
-    validator_ = std::make_unique<MinimalHeaderValidator>();
+    QUICHE_VLOG(2) << "instantiating noop header validator";
+    validator_ = std::make_unique<NoopHeaderValidator>();
   }
 }
 
@@ -353,10 +353,10 @@ OgHttp2Session::OgHttp2Session(Http2VisitorInterface& visitor, Options options)
   decoder_.set_visitor(&receive_logger_);
   if (options_.max_header_list_bytes) {
     // Limit buffering of encoded HPACK data to 2x the decoded limit.
-    decoder_.GetHpackDecoder()->set_max_decode_buffer_size_bytes(
+    decoder_.GetHpackDecoder().set_max_decode_buffer_size_bytes(
         2 * *options_.max_header_list_bytes);
     // Limit the total bytes accepted for HPACK decoding to 4x the limit.
-    decoder_.GetHpackDecoder()->set_max_header_block_bytes(
+    decoder_.GetHpackDecoder().set_max_header_block_bytes(
         4 * *options_.max_header_list_bytes);
   }
   if (IsServerSession()) {
@@ -442,13 +442,11 @@ int OgHttp2Session::GetHpackEncoderDynamicTableCapacity() const {
 }
 
 int OgHttp2Session::GetHpackDecoderDynamicTableSize() const {
-  const spdy::HpackDecoderAdapter* decoder = decoder_.GetHpackDecoder();
-  return decoder == nullptr ? 0 : decoder->GetDynamicTableSize();
+  return decoder_.GetHpackDecoder().GetDynamicTableSize();
 }
 
 int OgHttp2Session::GetHpackDecoderSizeLimit() const {
-  const spdy::HpackDecoderAdapter* decoder = decoder_.GetHpackDecoder();
-  return decoder == nullptr ? 0 : decoder->GetCurrentHeaderTableSizeSetting();
+  return decoder_.GetHpackDecoder().GetCurrentHeaderTableSizeSetting();
 }
 
 int64_t OgHttp2Session::ProcessBytes(absl::string_view bytes) {
@@ -634,6 +632,7 @@ Http2StreamId OgHttp2Session::GetNextReadyStream() {
     const Http2StreamId stream_id = *trailers_ready_.begin();
     // WriteForStream() will re-mark the stream as ready, if necessary.
     write_scheduler_.MarkStreamNotReady(stream_id);
+    trailers_ready_.erase(trailers_ready_.begin());
     return stream_id;
   }
   return write_scheduler_.PopNextReadyStream();
@@ -658,8 +657,8 @@ OgHttp2Session::SendResult OgHttp2Session::MaybeSendBufferedData() {
 
 OgHttp2Session::SendResult OgHttp2Session::SendQueuedFrames() {
   // Flush any serialized prefix.
-  const SendResult result = MaybeSendBufferedData();
-  if (result != SendResult::SEND_OK) {
+  if (const SendResult result = MaybeSendBufferedData();
+      result != SendResult::SEND_OK) {
     return result;
   }
   // Serialize and send frames in the queue.
@@ -1698,7 +1697,7 @@ void OgHttp2Session::HandleOutboundSettings(
               max_inbound_concurrent_streams_ = value;
               break;
             case HEADER_TABLE_SIZE:
-              decoder_.GetHpackDecoder()->ApplyHeaderTableSizeSetting(value);
+              decoder_.GetHpackDecoder().ApplyHeaderTableSizeSetting(value);
               break;
             case INITIAL_WINDOW_SIZE:
               UpdateStreamReceiveWindowSizes(value);
