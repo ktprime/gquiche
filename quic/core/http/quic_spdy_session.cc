@@ -489,9 +489,7 @@ QuicSpdySession::QuicSpdySession(
       destruction_indicator_(123456789),
       allow_extended_connect_(perspective() == Perspective::IS_SERVER &&
                               VersionUsesHttp3(transport_version())),
-      force_buffer_requests_until_settings_(false),
-      quic_enable_h3_datagrams_flag_(
-          GetQuicReloadableFlag(quic_enable_h3_datagrams)) {
+      force_buffer_requests_until_settings_(false) {
   h2_deframer_.set_visitor(spdy_framer_visitor_.get());
   h2_deframer_.set_debug_visitor(spdy_framer_visitor_.get());
   spdy_framer_.set_debug_visitor(spdy_framer_visitor_.get());
@@ -534,7 +532,7 @@ void QuicSpdySession::Initialize() {
   spdy_framer_visitor_->set_max_header_list_size(max_inbound_header_list_size_);
 
   // Limit HPACK buffering to 2x header list size limit.
-  h2_deframer_.GetHpackDecoder()->set_max_decode_buffer_size_bytes(
+  h2_deframer_.GetHpackDecoder().set_max_decode_buffer_size_bytes(
       2 * max_inbound_header_list_size_);
 }
 
@@ -553,7 +551,6 @@ void QuicSpdySession::FillSettingsFrame() {
         settings_.values[SETTINGS_H3_DATAGRAM_DRAFT04] = 1;
         break;
       case HttpDatagramSupport::kRfc:
-        QUIC_RELOADABLE_FLAG_COUNT(quic_enable_h3_datagrams);
         settings_.values[SETTINGS_H3_DATAGRAM] = 1;
         break;
       case HttpDatagramSupport::kRfcAndDraft04:
@@ -856,7 +853,7 @@ void QuicSpdySession::SendInitialData() {
 }
 
 bool QuicSpdySession::CheckStreamWriteBlocked(QuicStream* stream) const {
-  if (GetQuicRestartFlag(quic_opport_bundle_qpack_decoder_data2) &&
+  if (GetQuicRestartFlag(quic_opport_bundle_qpack_decoder_data3) &&
       qpack_decoder_send_stream_ != nullptr &&
       stream->id() == qpack_decoder_send_stream_->id()) {
     // Decoder data is always bundled opportunistically.
@@ -1906,10 +1903,7 @@ void QuicSpdySession::DatagramObserver::OnDatagramProcessed(
 }
 
 HttpDatagramSupport QuicSpdySession::LocalHttpDatagramSupport() {
-  if (quic_enable_h3_datagrams_flag_) {
-    return HttpDatagramSupport::kRfc;
-  }
-  return HttpDatagramSupport::kNone;
+  return HttpDatagramSupport::kRfc;
 }
 
 std::string HttpDatagramSupportToString(

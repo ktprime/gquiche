@@ -62,6 +62,18 @@ struct QUICHE_EXPORT StreamPendingRetransmission {
 // the list when they get fully acked. Stream data can be retrieved and acked
 // across slice boundaries.
 class QUICHE_EXPORT QuicStreamSendBuffer {
+  // Size of blocks used by this buffer.
+  // Choose 8K to make block large enough to hold multiple frames, each of
+  // which could be up to 1.5 KB.
+  static constexpr size_t kBlockSizeBytes = 16 * 1024;  // 8KB
+  static constexpr size_t kSmallBlocks = 64 * 1024 / kBlockSizeBytes;
+  //static_assert(kBlockSizeBytes > kMaxIncomingPacketSize);
+
+  // The basic storage block used by this buffer.
+  struct QUIC_EXPORT_PRIVATE BufferBlock {
+    char buffer[kBlockSizeBytes];
+  };
+
  public:
   explicit QuicStreamSendBuffer(quiche::QuicheBufferAllocator* allocator);
   QuicStreamSendBuffer(const QuicStreamSendBuffer& other) = delete;
@@ -109,7 +121,7 @@ class QUICHE_EXPORT QuicStreamSendBuffer {
                                QuicByteCount data_length) const;
 
   // Number of data slices in send buffer.
-  size_t size() const;
+  //size_t size() const;
 
   QuicStreamOffset stream_offset() const { return stream_offset_; }
 
@@ -127,6 +139,14 @@ class QUICHE_EXPORT QuicStreamSendBuffer {
     return pending_retransmissions_;
   }
 
+  size_t GetBlockIndex(QuicStreamOffset offset) const {
+    return (offset - stream_bytes_start_) / kBlockSizeBytes;
+  }
+
+  size_t GetInBlockOffset(QuicStreamOffset offset) const {
+    return offset % kBlockSizeBytes;
+  }
+
  private:
   friend class test::QuicStreamSendBufferPeer;
   friend class test::QuicStreamPeer;
@@ -142,12 +162,11 @@ class QUICHE_EXPORT QuicStreamSendBuffer {
   // |current_end_offset_| stores the end offset of the current slice to ensure
   // data isn't being written out of order when using the |interval_deque_|.
   QuicStreamOffset current_end_offset_;
-  QuicIntervalDeque<BufferedSlice> interval_deque_;
-
   // Offset of next inserted byte.
   QuicStreamOffset stream_offset_;
+  QuicStreamOffset stream_bytes_start_;
 
-  quiche::QuicheBufferAllocator* allocator_;
+  absl::InlinedVector<BufferBlock*, kSmallBlocks> blocks_;
 
   // Bytes that have been consumed by the stream.
   uint64_t stream_bytes_written_;
@@ -163,7 +182,7 @@ class QUICHE_EXPORT QuicStreamSendBuffer {
 
   // Index of slice which contains data waiting to be written for the first
   // time. -1 if send buffer is empty or all data has been written.
-  int32_t write_index_;
+  //int32_t write_index_;
 };
 
 }  // namespace quic

@@ -56,6 +56,26 @@ class ClosedStreamsCleanUpDelegate : public QuicAlarm::Delegate {
   QuicSession* session_;
 };
 
+class StreamCountResetAlarmDelegate : public QuicAlarm::Delegate {
+ public:
+  explicit StreamCountResetAlarmDelegate(QuicSession* session)
+      : session_(session) {}
+  StreamCountResetAlarmDelegate(const StreamCountResetAlarmDelegate&) = delete;
+  StreamCountResetAlarmDelegate& operator=(
+      const StreamCountResetAlarmDelegate&) = delete;
+
+  QuicConnectionContext* GetConnectionContext() override {
+    return (session_->connection() == nullptr)
+               ? nullptr
+               : session_->connection()->context();
+  }
+
+  void OnAlarm() override { session_->OnStreamCountReset(); }
+
+ private:
+  QuicSession* session_;
+};
+
 }  // namespace
 
 #define ENDPOINT \
@@ -110,8 +130,9 @@ QuicSession::QuicSession(
       is_configured_(false),
       was_zero_rtt_rejected_(false),
       liveness_testing_in_progress_(false),
-      limit_sending_max_streams_(
-          GetQuicReloadableFlag(quic_limit_sending_max_streams2)) {
+      stream_count_reset_alarm_(
+          absl::WrapUnique<QuicAlarm>(connection->alarm_factory()->CreateAlarm(
+              new StreamCountResetAlarmDelegate(this)))) {
   closed_streams_clean_up_alarm_ =
       absl::WrapUnique<QuicAlarm>(connection_->alarm_factory()->CreateAlarm(
           new ClosedStreamsCleanUpDelegate(this)));
@@ -160,6 +181,9 @@ QuicSession::~QuicSession() {
   if (closed_streams_clean_up_alarm_ != nullptr) {
     closed_streams_clean_up_alarm_->PermanentCancel();
   }
+  if (stream_count_reset_alarm_ != nullptr) {
+    stream_count_reset_alarm_->PermanentCancel();
+  }
 }
 
 PendingStream* QuicSession::PendingStreamOnStreamFrame(
@@ -184,25 +208,41 @@ PendingStream* QuicSession::PendingStreamOnStreamFrame(
   return pending;
 }
 
-void QuicSession::MaybeProcessPendingStream(PendingStream* pending) {
-  QUICHE_DCHECK(pending != nullptr);
+bool QuicSession::MaybeProcessPendingStream(PendingStream* pending) {
+  QUICHE_DCHECK(pending != nullptr && connection()->connected());
+
+  if (ExceedsPerLoopStreamLimit()) {
+    QUIC_DLOG(INFO) << "Skip processing pending stream " << pending->id()
+                    << " because it exceeds per loop limit.";
+    QUIC_CODE_COUNT_N(quic_pending_stream, 1, 3);
+    return false;
+  }
+
   QuicStreamId stream_id = pending->id();
   std::optional<QuicResetStreamError> stop_sending_error_code =
       pending->GetStopSendingErrorCode();
+  QUIC_DLOG(INFO) << "Process pending stream " << pending->id();
   QuicStream* stream = ProcessPendingStream(pending);
   if (stream != nullptr) {
     // The pending stream should now be in the scope of normal streams.
     QUICHE_DCHECK(IsClosedStream(stream_id) || IsOpenStream(stream_id))
         << "Stream " << stream_id << " not created";
+    if (!stream->pending_duration().IsZero()) {
+      QUIC_SERVER_HISTOGRAM_TIMES("QuicStream.PendingDurationUs",
+                                  stream->pending_duration().ToMicroseconds(),
+                                  0, 1000 * 100, 20,
+                                  "Time a stream has been pending at server.");
+      ++connection()->mutable_stats().num_total_pending_streams;
+    }
     pending_stream_map_.erase(stream_id);
     if (stop_sending_error_code) {
       stream->OnStopSending(*stop_sending_error_code);
       if (!connection()->connected()) {
-        return;
+        return false;
       }
     }
     stream->OnStreamCreatedFromPendingStream();
-    return;
+    return connection()->connected();
   }
   // At this point, none of the bytes has been successfully consumed by the
   // application layer. We should close the pending stream even if it is
@@ -211,6 +251,7 @@ void QuicSession::MaybeProcessPendingStream(PendingStream* pending) {
   if (pending->sequencer()->IsClosed()) {
     ClosePendingStream(stream_id);
   }
+  return connection()->connected();
 }
 
 void QuicSession::PendingStreamOnWindowUpdateFrame(
@@ -467,6 +508,7 @@ void QuicSession::OnConnectionClosed(const QuicConnectionCloseFrame& frame,
   });
 
   closed_streams_clean_up_alarm_->Cancel();
+  stream_count_reset_alarm_->Cancel();
 
   if (visitor_) {
     visitor_->OnConnectionClosed(connection_->GetOneActiveServerConnectionId(),
@@ -880,11 +922,13 @@ bool QuicSession::WriteControlFrame(const QuicFrame& frame,
     // Suppress the write before encryption gets established.
     return false;
   }
-  if (limit_sending_max_streams_ &&
-      connection_->framer().is_processing_packet()) {
-    QUIC_RELOADABLE_FLAG_COUNT_N(quic_limit_sending_max_streams2, 3, 3);
-    // The frame will be sent when OnCanWrite() is called.
-    return false;
+  if (GetQuicRestartFlag(quic_allow_control_frames_while_procesing)) {
+    QUIC_RESTART_FLAG_COUNT_N(quic_allow_control_frames_while_procesing, 1, 3);
+  } else {
+    if (connection_->framer().is_processing_packet()) {
+      // The frame will be sent when OnCanWrite() is called.
+      return false;
+    }
   }
   SetTransmissionType(type);
   QuicConnection::ScopedEncryptionLevelContext context(
@@ -987,10 +1031,6 @@ void QuicSession::OnStreamError(QuicErrorCode error_code,
 }
 
 bool QuicSession::CanSendMaxStreams() {
-  if (!limit_sending_max_streams_) {
-    return true;
-  }
-  QUIC_RELOADABLE_FLAG_COUNT_N(quic_limit_sending_max_streams2, 1, 3);
   return control_frame_manager_.NumBufferedMaxStreams() < 2;
 }
 
@@ -1091,8 +1131,9 @@ void QuicSession::ClosePendingStream(QuicStreamId stream_id) {
 
 bool QuicSession::ShouldProcessFrameByPendingStream(QuicFrameType type,
                                                     QuicStreamId id) const {
-  return UsesPendingStreamForFrame(type, id) &&
-         stream_map_.find(id) == stream_map_.end();
+  return stream_map_.find(id) == stream_map_.end() &&
+         ((version().HasIetfQuicFrames() && ExceedsPerLoopStreamLimit()) ||
+          UsesPendingStreamForFrame(type, id));
 }
 
 void QuicSession::OnFinalByteOffsetReceived(
@@ -1729,7 +1770,6 @@ void QuicSession::OnTlsHandshakeComplete() {
 }
 
 bool QuicSession::MaybeSendAddressToken() {
-#if QUIC_SERVER_SESSION //hybchanged
   QUICHE_DCHECK(perspective_ == Perspective::IS_SERVER &&
                 connection()->version().HasIetfQuicFrames());
   std::optional<CachedNetworkParameters> cached_network_params =
@@ -1752,7 +1792,6 @@ bool QuicSession::MaybeSendAddressToken() {
     connection()->OnSendConnectionState(*cached_network_params);
   }
   return true;
-#endif
 }
 
 void QuicSession::DiscardOldDecryptionKey(EncryptionLevel level) {
@@ -1883,6 +1922,15 @@ void QuicSession::ActivateStream(std::unique_ptr<QuicStream> stream) {
   if (is_static) {
     ++num_static_streams_;
     return;
+  }
+  if (version().HasIetfQuicFrames() && IsIncomingStream(stream_id) &&
+      max_streams_accepted_per_loop_ != kMaxQuicStreamCount) {
+    QUICHE_DCHECK(!ExceedsPerLoopStreamLimit());
+    // Per-loop stream limit is emposed.
+    ++new_incoming_streams_in_current_loop_;
+    if (!stream_count_reset_alarm_->IsSet()) {
+      stream_count_reset_alarm_->Set(connection()->clock()->ApproximateNow());
+    }
   }
   if (!VersionHasIetfQuicFrames(transport_version())) {
     // Do not inform stream ID manager of static streams.
@@ -2292,12 +2340,10 @@ bool QuicSession::OnFrameAcked(const QuicFrame& frame,
   }
   if (frame.type != STREAM_FRAME) {
     bool acked = control_frame_manager_.OnControlFrameAcked(frame);
-    if (limit_sending_max_streams_ && acked &&
-        frame.type == MAX_STREAMS_FRAME) {
+    if (acked && frame.type == MAX_STREAMS_FRAME) {
       // Since there is a 2 frame limit on the number of outstanding max_streams
       // frames, when an outstanding max_streams frame is ack'd that frees up
       // room to potntially send another.
-      QUIC_RELOADABLE_FLAG_COUNT_N(quic_limit_sending_max_streams2, 2, 3);
       ietf_streamid_manager_.MaybeSendMaxStreamsFrame();
     }
     return acked;
@@ -2487,8 +2533,8 @@ bool QuicSession::RetransmitLostData() {
   QuicConnection::ScopedPacketFlusher retransmission_flusher(connection_);
   // Retransmit crypto data first.
   bool uses_crypto_frames = QuicVersionUsesCryptoFrames(transport_version());
-  QuicCryptoStream* crypto_stream = GetMutableCryptoStream();
-  if (uses_crypto_frames && crypto_stream->HasPendingCryptoRetransmission()) {
+  if (QuicCryptoStream* const crypto_stream = GetMutableCryptoStream();
+      uses_crypto_frames && crypto_stream->HasPendingCryptoRetransmission()) {
     crypto_stream->WritePendingCryptoRetransmission();
   }
   // Retransmit crypto data in stream 1 frames (version < 47).
@@ -2496,7 +2542,7 @@ bool QuicSession::RetransmitLostData() {
       streams_with_pending_retransmission_.contains(
           QuicUtils::GetCryptoStreamId(transport_version()))) {
     // Retransmit crypto data first.
-    QuicStream* crypto_stream =
+    QuicStream* const crypto_stream =
         GetStream(QuicUtils::GetCryptoStreamId(transport_version()));
     crypto_stream->OnCanWrite();
     QUICHE_DCHECK(CheckStreamWriteBlocked(crypto_stream));
@@ -2712,8 +2758,8 @@ void QuicSession::ProcessAllPendingStreams() {
     pending_streams.push_back(it->second.get());
   }
   for (auto* pending_stream : pending_streams) {
-    MaybeProcessPendingStream(pending_stream);
-    if (!connection()->connected()) {
+    if (!MaybeProcessPendingStream(pending_stream)) {
+      // Defer any further pending stream processing to the next event loop.
       return;
     }
   }
@@ -2795,6 +2841,23 @@ QuicStream* QuicSession::ProcessPendingStream(PendingStream* pending) {
   }
   return nullptr;  // Unreachable, unless the enum value is out-of-range
                    // (potentially undefined behavior)
+}
+
+bool QuicSession::ExceedsPerLoopStreamLimit() const {
+  QUICHE_DCHECK(version().HasIetfQuicFrames());
+  return new_incoming_streams_in_current_loop_ >=
+         max_streams_accepted_per_loop_;
+}
+
+void QuicSession::OnStreamCountReset() {
+  const bool exceeded_per_loop_stream_limit = ExceedsPerLoopStreamLimit();
+  new_incoming_streams_in_current_loop_ = 0;
+  if (exceeded_per_loop_stream_limit) {
+    QUIC_CODE_COUNT_N(quic_pending_stream, 2, 3);
+    // Convert as many leftover pending streams from last loop to active streams
+    // as allowed.
+    ProcessAllPendingStreams();
+  }
 }
 
 #undef ENDPOINT  // undef for jumbo builds

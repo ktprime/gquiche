@@ -39,7 +39,7 @@ constexpr uint8_t kEcnMask = 0x03;
 
 constexpr int kIpv6RecvPacketInfo = IPV6_RECVPKTINFO;
 
-#if defined(__linux__) && (!defined(__ANDROID_API__) || __ANDROID_API__ >= 21)
+#if defined(__linux__) && !defined(__ANDROID_API__)
 #define QUIC_UDP_SOCKET_SUPPORT_LINUX_TIMESTAMPING 1
 // This is the structure that SO_TIMESTAMPING fills into the cmsg header.
 // It is well-defined, but does not have a definition in a public header.
@@ -523,8 +523,8 @@ WriteResult QuicUdpSocketApi::WritePacket(
     int cmsg_type;
     unsigned char value_buf[20];
     socklen_t value_len = sizeof(value_buf);
-    if (GetQuicRestartFlag(quic_platform_tos_sockopt)) {
-      QUIC_RESTART_FLAG_COUNT(quic_platform_tos_sockopt);
+    if (GetQuicRestartFlag(quic_support_ect1)) {
+      QUIC_RESTART_FLAG_COUNT_N(quic_support_ect1, 9, 9);
       if (GetEcnCmsgArgsPreserveDscp(
               fd, packet_info.peer_address().host().address_family(),
               packet_info.ecn_codepoint(), cmsg_type, value_buf,

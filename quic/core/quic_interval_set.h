@@ -64,6 +64,7 @@
 #include "quiche/quic/platform/api/quic_flags.h"
 #include "quiche/common/platform/api/quiche_containers.h"
 #include "quiche/common/platform/api/quiche_logging.h"
+#include "quiche/common/small_flat_set.hpp"
 
 namespace quic {
 
@@ -87,7 +88,8 @@ class QUICHE_NO_EXPORT QuicIntervalSet {
     bool operator()(T&& point, const value_type& a) const;
   };
 
-  using Set = quiche::QuicheSmallOrderedSet<value_type, IntervalLess>;
+  //using Set = quiche::QuicheSmallOrderedSet<value_type, IntervalLess>;
+  using Set = sfl::small_flat_set<value_type, 32, IntervalLess>;
 
  public:
   using const_iterator = typename Set::const_iterator;
@@ -129,11 +131,23 @@ class QUICHE_NO_EXPORT QuicIntervalSet {
   // rbegin()->min() <= |interval|.min() <= rbegin()->max().
   void AddOptimizedForAppend(const value_type& interval) {
     if (Empty() || !GetQuicFlag(quic_interval_set_enable_add_optimization)) {
-      Add(interval);
+      intervals_.insert(intervals_.end(), interval);
       return;
     }
 
     const_reverse_iterator last_interval = intervals_.rbegin();
+
+    //update last
+    const T& rmax = last_interval->max();
+    if (rmax == interval.min()) {
+      const_cast<T&>(rmax) = interval.max();
+      return;
+    }
+    else if (rmax < interval.min()) {
+      intervals_.insert(intervals_.end(), interval);
+      //intervals_.append(interval);
+      return;
+   }
 
     // If interval.min() is outside of [last_interval->min, last_interval->max],
     // we can not simply extend last_interval->max.

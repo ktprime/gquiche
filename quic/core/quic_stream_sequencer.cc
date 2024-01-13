@@ -173,6 +173,7 @@ void QuicStreamSequencer::MaybeCloseStream() {
     // receipt of a FIN because the consumer won't.
     stream_->OnFinRead();
   } else {
+    if (buffered_frames_.ReadableBytes())
     stream_->OnDataAvailable();
   }
   buffered_frames_.Clear();
@@ -232,9 +233,10 @@ bool QuicStreamSequencer::IsClosed() const {
   return buffered_frames_.BytesConsumed() >= close_offset_;
 }
 
-void QuicStreamSequencer::MarkConsumed(size_t num_bytes_consumed) {
+int QuicStreamSequencer::MarkConsumed(size_t num_bytes_consumed) {
   QUICHE_DCHECK(!blocked_);
   bool result = buffered_frames_.MarkConsumed(num_bytes_consumed);
+  QUICHE_DCHECK(result);
   if (!result) {
     QUIC_BUG(quic_bug_10858_2)
         << "Invalid argument to MarkConsumed."
@@ -242,9 +244,10 @@ void QuicStreamSequencer::MarkConsumed(size_t num_bytes_consumed) {
         << ", but not enough bytes available. " << DebugString();
     stream_->ResetWithError(
         QuicResetStreamError::FromInternal(QUIC_ERROR_PROCESSING_STREAM));
-    return;
+    return -1;
   }
   stream_->AddBytesConsumed(num_bytes_consumed);
+  return ReadableBytes();
 }
 
 void QuicStreamSequencer::SetBlockedUntilFlush() { blocked_ = true; }

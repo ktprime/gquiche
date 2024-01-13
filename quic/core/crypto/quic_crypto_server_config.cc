@@ -1811,11 +1811,11 @@ HandshakeFailureReason QuicCryptoServerConfig::ParseSourceAddressToken(
     // Some clients might still be using the old source token format so
     // attempt to parse that format.
     // TODO(rch): remove this code once the new format is ubiquitous.
-    SourceAddressToken token;
-    if (!token.ParseFromArray(plaintext.data(), plaintext.size())) {
+    SourceAddressToken old_source_token;
+    if (!old_source_token.ParseFromArray(plaintext.data(), plaintext.size())) {
       return SOURCE_ADDRESS_TOKEN_PARSE_FAILURE;
     }
-    *tokens.add_tokens() = token;
+    *tokens.add_tokens() = old_source_token;
   }
 
   return HANDSHAKE_OK;

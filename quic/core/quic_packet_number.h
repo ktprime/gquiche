@@ -32,7 +32,7 @@ class QUICHE_EXPORT QuicPacketNumber {
 
   // The sentinel value representing an uninitialized packet number.
   static constexpr uint64_t UninitializedPacketNumber() {
-    return std::numeric_limits<uint64_t>::max();
+    return 0;// std::numeric_limits<uint64_t>::max();
   }
 
   // Packet number becomes uninitialized after calling this function.

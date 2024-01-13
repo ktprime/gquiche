@@ -99,7 +99,7 @@ class QUICHE_EXPORT QuicStreamSequencer final {
 
   // Consumes |num_bytes| data.  Used in conjunction with |GetReadableRegions|
   // to do zero-copy reads.
-  void MarkConsumed(size_t num_bytes);
+  int MarkConsumed(size_t num_bytes);
 
   // Appends all of the readable data to |buffer| and marks all of the appended
   // data as consumed.

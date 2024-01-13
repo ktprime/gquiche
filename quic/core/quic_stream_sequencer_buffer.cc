@@ -475,6 +475,11 @@ bool QuicStreamSequencerBuffer::RetireBlockIfEmpty(size_t block_index) {
       << "RetireBlockIfEmpty() should only be called when advancing to next "
       << "block or a gap has been reached.";
   // If the whole buffer becomes empty, the last piece of data has been read.
+  //keeping current block to use and make sure DCHECK(max_buffer_capacity_bytes_ % kBlockSizeBytes == 0);
+  const auto block_finished = total_bytes_read_ % kBlockSizeBytes == 0;
+  if (!block_finished)
+    return true;
+#if 0
   if (Empty()) {
     return RetireBlock(block_index);
   }
@@ -499,6 +504,7 @@ bool QuicStreamSequencerBuffer::RetireBlockIfEmpty(size_t block_index) {
       return false;
     }
   }
+#endif
   return RetireBlock(block_index);
 }
 

@@ -589,10 +589,10 @@ void TlsServerHandshaker::SetWriteSecret(
   if (level == ENCRYPTION_FORWARD_SECURE) {
     encryption_established_ = true;
     // Fill crypto_negotiated_params_:
-    const SSL_CIPHER* cipher = SSL_get_current_cipher(ssl());
-    if (cipher) {
+    const SSL_CIPHER* ssl_cipher = SSL_get_current_cipher(ssl());
+    if (ssl_cipher) {
       crypto_negotiated_params_->cipher_suite =
-          SSL_CIPHER_get_protocol_id(cipher);
+          SSL_CIPHER_get_protocol_id(ssl_cipher);
     }
     crypto_negotiated_params_->key_exchange_group = SSL_get_curve_id(ssl());
     crypto_negotiated_params_->encrypted_client_hello = SSL_ech_accepted(ssl());
@@ -603,6 +603,17 @@ void TlsServerHandshaker::SetWriteSecret(
 std::string TlsServerHandshaker::GetAcceptChValueForHostname(
     const std::string& /*hostname*/) const {
   return {};
+}
+
+bool TlsServerHandshaker::UseAlpsNewCodepoint() const {
+  if (!select_cert_status_.has_value()) {
+    QUIC_BUG(quic_tls_check_alps_new_codepoint_too_early)
+        << "UseAlpsNewCodepoint must be called after "
+           "EarlySelectCertCallback is started";
+    return false;
+  }
+
+  return alps_new_codepoint_received_;
 }
 
 void TlsServerHandshaker::FinishHandshake() {
@@ -885,6 +896,24 @@ ssl_select_cert_result_t TlsServerHandshaker::EarlySelectCertCallback(
     early_data_attempted_ = SSL_early_callback_ctx_extension_get(
         client_hello, TLSEXT_TYPE_early_data, &unused_extension_bytes,
         &unused_extension_len);
+
+#if BORINGSSL_API_VERSION >= 27
+    if (GetQuicReloadableFlag(quic_gfe_allow_alps_new_codepoint)) {
+      QUIC_RELOADABLE_FLAG_COUNT(quic_gfe_allow_alps_new_codepoint);
+
+      alps_new_codepoint_received_ = SSL_early_callback_ctx_extension_get(
+          client_hello, TLSEXT_TYPE_application_settings,
+          &unused_extension_bytes, &unused_extension_len);
+      // Make sure we use the right ALPS codepoint.
+      int use_alps_new_codepoint = 0;
+      if (alps_new_codepoint_received_) {
+        QUIC_CODE_COUNT(quic_gfe_alps_use_new_codepoint);
+        use_alps_new_codepoint = 1;
+      }
+      QUIC_DLOG(INFO) << "ALPS use new codepoint: " << use_alps_new_codepoint;
+      SSL_set_alps_use_new_codepoint(ssl(), use_alps_new_codepoint);
+    }
+#endif  // BORINGSSL_API_VERSION
   }
 
   // This callback is called very early by Boring SSL, most of the SSL_get_foo

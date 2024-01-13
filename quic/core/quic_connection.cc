@@ -2392,14 +2392,10 @@ void QuicConnection::MaybeSendInResponseToPacket() {
     // Pacing limited: CanWrite returned false, and it has scheduled a send
     // alarm before it returns.
     if (send_alarm_->deadline() > max_deadline) {
-      QUIC_BUG(quic_send_alarm_postponed)
-          << "previous deadline:" << max_deadline
-          << ", deadline from CanWrite:" << send_alarm_->deadline()
-          << ", last_can_write_reason:"
-          << static_cast<int>(last_can_write_reason_)
-          << ", packets_sent_on_last_successful_can_write:"
-          << packets_sent_on_last_successful_can_write_;
-      QUIC_DVLOG(1) << "Send alarm restored after processing packet.";
+      QUIC_DVLOG(1)
+          << "Send alarm restored after processing packet. previous deadline:"
+          << max_deadline
+          << ", deadline from CanWrite:" << send_alarm_->deadline();
       // Restore to the previous, earlier deadline.
       send_alarm_->Update(max_deadline, QuicTime::Delta::Zero());
     } else {
@@ -3167,8 +3163,8 @@ void QuicConnection::MaybeBundleOpportunistically() {
     }
   }
 
-  if (GetQuicRestartFlag(quic_opport_bundle_qpack_decoder_data2)) {
-    QUIC_RESTART_FLAG_COUNT_N(quic_opport_bundle_qpack_decoder_data2, 1, 4);
+  if (GetQuicRestartFlag(quic_opport_bundle_qpack_decoder_data3)) {
+    QUIC_RESTART_FLAG_COUNT_N(quic_opport_bundle_qpack_decoder_data3, 1, 4);
     visitor_->MaybeBundleOpportunistically();
   }
 
@@ -3200,11 +3196,6 @@ void QuicConnection::MaybeBundleOpportunistically() {
       << ENDPOINT << "Failed to flush ACK frame";
 }
 
-void QuicConnection::RecordLastCanWriteReason(LastCanWriteReason reason) {
-  last_can_write_reason_ = reason;
-  packets_sent_on_last_successful_can_write_ = stats_.packets_sent;
-}
-
 bool QuicConnection::CanWrite(HasRetransmittableData retransmittable) {
   if (!connected_) {
     return false;
@@ -3230,9 +3221,6 @@ bool QuicConnection::CanWrite(HasRetransmittableData retransmittable) {
     // Try to coalesce packet, only allow to write when creator is on soft max
     // packet length. Given the next created packet is going to fill current
     // coalesced packet, do not check amplification factor.
-    if (packet_creator_.HasSoftMaxPacketLength()) {
-      RecordLastCanWriteReason(LAST_CAN_WRITE_REASON_COALESCE_PACKET);
-    }
     return packet_creator_.HasSoftMaxPacketLength();
   }
 
@@ -3241,7 +3229,6 @@ bool QuicConnection::CanWrite(HasRetransmittableData retransmittable) {
     // 1) firing PTO,
     // 2) bundling CRYPTO data with ACKs,
     // 3) coalescing CRYPTO data of higher space.
-    RecordLastCanWriteReason(LAST_CAN_WRITE_REASON_PENDING_TIMER);
     return true;
   }
 
@@ -3264,7 +3251,6 @@ bool QuicConnection::CanWrite(HasRetransmittableData retransmittable) {
 
   // Allow acks and probing frames to be sent immediately.
   if (retransmittable == NO_RETRANSMITTABLE_DATA) {
-    RecordLastCanWriteReason(LAST_CAN_WRITE_REASON_NO_RETRANSMITTABLE_DATA);
     return true;
   }
   // If the send alarm is set, wait for it to fire.
@@ -3283,7 +3269,6 @@ bool QuicConnection::CanWrite(HasRetransmittableData retransmittable) {
   if (!delay.IsZero()) {
     if (delay <= release_time_into_future_) {
       // Required delay is within pace time into future, send now.
-      RecordLastCanWriteReason(LAST_CAN_WRITE_REASON_DELAY_WITHIN_RELEASE_TIME);
       return true;
     }
     // Cannot send packet now because delay is too far in the future.
@@ -3293,7 +3278,6 @@ bool QuicConnection::CanWrite(HasRetransmittableData retransmittable) {
     return false;
   }
 
-  RecordLastCanWriteReason(LAST_CAN_WRITE_REASON_NO_DELAY);
   return true;
 }
 
@@ -3958,18 +3942,18 @@ void QuicConnection::OnPathMtuIncreased(QuicPacketLength packet_size) {
 }
 
 void QuicConnection::OnInFlightEcnPacketAcked() {
-  QUIC_BUG_IF(quic_bug_518619343_01, !GetQuicReloadableFlag(quic_send_ect1))
+  QUIC_BUG_IF(quic_bug_518619343_01, !GetQuicRestartFlag(quic_support_ect1))
       << "Unexpected call to OnInFlightEcnPacketAcked()";
   // Only packets on the default path are in-flight.
   if (!default_path_.ecn_marked_packet_acked) {
     QUIC_DVLOG(1) << ENDPOINT << "First ECT packet acked on active path.";
-    QUIC_RELOADABLE_FLAG_COUNT_N(quic_send_ect1, 2, 8);
+    QUIC_RESTART_FLAG_COUNT_N(quic_support_ect1, 2, 9);
     default_path_.ecn_marked_packet_acked = true;
   }
 }
 
 void QuicConnection::OnInvalidEcnFeedback() {
-  QUIC_BUG_IF(quic_bug_518619343_02, !GetQuicReloadableFlag(quic_send_ect1))
+  QUIC_BUG_IF(quic_bug_518619343_02, !GetQuicRestartFlag(quic_support_ect1))
       << "Unexpected call to OnInvalidEcnFeedback().";
   if (disable_ecn_codepoint_validation_) {
     // In some tests, senders may send ECN marks in patterns that are not
@@ -4550,13 +4534,13 @@ void QuicConnection::SendConnectionClosePacket(
     QuicErrorCode error, QuicIetfTransportErrorCodes ietf_error,
     const std::string& details) {
   // Always use the current path to send CONNECTION_CLOSE.
-  QuicPacketCreator::ScopedPeerAddressContext context(
+  QuicPacketCreator::ScopedPeerAddressContext peer_address_context(
       &packet_creator_, peer_address(), default_path_.client_connection_id,
       default_path_.server_connection_id);
   if (!SupportsMultiplePacketNumberSpaces()) {
     QUIC_DLOG(INFO) << ENDPOINT << "Sending connection close packet.";
-    ScopedEncryptionLevelContext context(this,
-                                         GetConnectionCloseEncryptionLevel());
+    ScopedEncryptionLevelContext encryption_level_context(
+        this, GetConnectionCloseEncryptionLevel());
     if (version().CanSendCoalescedPackets()) {
       coalesced_packet_.Clear();
     }
@@ -4570,10 +4554,8 @@ void QuicConnection::SendConnectionClosePacket(
         !packet_creator_.has_ack()) {
       SendAck();
     }
-    QuicConnectionCloseFrame* frame;
-
-    frame = new QuicConnectionCloseFrame(transport_version(), error, ietf_error,
-                                         details,
+    QuicConnectionCloseFrame* const frame = new QuicConnectionCloseFrame(
+        transport_version(), error, ietf_error, details,
                                          framer_.current_received_frame_type());
     packet_creator_.ConsumeRetransmittableControlFrame(QuicFrame(frame));
     packet_creator_.FlushCurrentPacket();
@@ -5795,8 +5777,8 @@ void QuicConnection::SendAllPendingAcks() {
       uber_received_packet_manager_.GetEarliestAckTimeout();
   QUIC_BUG_IF(quic_bug_12714_32, !earliest_ack_timeout.IsInitialized());
   MaybeBundleCryptoDataWithAcks();
-  if (GetQuicRestartFlag(quic_opport_bundle_qpack_decoder_data2)) {
-    QUIC_RESTART_FLAG_COUNT_N(quic_opport_bundle_qpack_decoder_data2, 2, 4);
+  if (GetQuicRestartFlag(quic_opport_bundle_qpack_decoder_data3)) {
+    QUIC_RESTART_FLAG_COUNT_N(quic_opport_bundle_qpack_decoder_data3, 2, 4);
     visitor_->MaybeBundleOpportunistically();
   }
   earliest_ack_timeout = uber_received_packet_manager_.GetEarliestAckTimeout();
@@ -7362,10 +7344,10 @@ void QuicConnection::OnServerPreferredAddressValidated(
 }
 
 bool QuicConnection::set_ecn_codepoint(QuicEcnCodepoint ecn_codepoint) {
-  if (!GetQuicReloadableFlag(quic_send_ect1)) {
+  if (!GetQuicRestartFlag(quic_support_ect1)) {
     return false;
   }
-  QUIC_RELOADABLE_FLAG_COUNT_N(quic_send_ect1, 3, 8);
+  QUIC_RESTART_FLAG_COUNT_N(quic_support_ect1, 3, 9);
   if (disable_ecn_codepoint_validation_ || ecn_codepoint == ECN_NOT_ECT) {
     packet_writer_params_.ecn_codepoint = ecn_codepoint;
     return true;
