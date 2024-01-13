@@ -4,23 +4,47 @@
 
 #include "quiche/quic/masque/masque_client_session.h"
 
+#include <cstdint>
 #include <cstring>
+#include <optional>
 #include <string>
+#include <utility>
+#include <vector>
 
-#include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
+#include "absl/strings/escaping.h"
 #include "absl/strings/str_cat.h"
+#include "absl/strings/str_split.h"
 #include "absl/strings/string_view.h"
-#include "quiche/quic/core/http/spdy_utils.h"
+#include "openssl/curve25519.h"
+#include "quiche/quic/core/crypto/quic_crypto_client_config.h"
+#include "quiche/quic/core/frames/quic_connection_close_frame.h"
+#include "quiche/quic/core/http/http_frames.h"
+#include "quiche/quic/core/http/quic_spdy_client_session.h"
+#include "quiche/quic/core/http/quic_spdy_client_stream.h"
+#include "quiche/quic/core/quic_config.h"
+#include "quiche/quic/core/quic_connection.h"
 #include "quiche/quic/core/quic_data_reader.h"
 #include "quiche/quic/core/quic_data_writer.h"
+#include "quiche/quic/core/quic_error_codes.h"
+#include "quiche/quic/core/quic_server_id.h"
+#include "quiche/quic/core/quic_time.h"
+#include "quiche/quic/core/quic_types.h"
 #include "quiche/quic/core/quic_utils.h"
+#include "quiche/quic/core/quic_versions.h"
 #include "quiche/quic/masque/masque_utils.h"
+#include "quiche/quic/platform/api/quic_bug_tracker.h"
+#include "quiche/quic/platform/api/quic_logging.h"
 #include "quiche/quic/platform/api/quic_socket_address.h"
 #include "quiche/quic/tools/quic_url.h"
+#include "quiche/common/capsule.h"
 #include "quiche/common/platform/api/quiche_googleurl.h"
+#include "quiche/common/platform/api/quiche_logging.h"
 #include "quiche/common/platform/api/quiche_url_utils.h"
+#include "quiche/common/quiche_ip_address.h"
+#include "quiche/common/quiche_random.h"
+#include "quiche/common/quiche_text_utils.h"
 #include "quiche/spdy/core/http2_header_block.h"
 
 namespace quic {
@@ -146,6 +170,7 @@ MasqueClientSession::GetOrCreateConnectUdpClientState(
   headers[":authority"] = authority;
   headers[":path"] = canonicalized_path;
   headers["connect-udp-version"] = "12";
+  AddAdditionalHeaders(headers, url);
   size_t bytes_sent =
       stream->SendRequest(std::move(headers), /*body=*/"", /*fin=*/false);
   if (bytes_sent == 0) {
@@ -192,6 +217,7 @@ MasqueClientSession::GetOrCreateConnectIpClientState(
   headers[":authority"] = authority;
   headers[":path"] = path;
   headers["connect-ip-version"] = "3";
+  AddAdditionalHeaders(headers, url);
   size_t bytes_sent =
       stream->SendRequest(std::move(headers), /*body=*/"", /*fin=*/false);
   if (bytes_sent == 0) {
@@ -240,6 +266,7 @@ MasqueClientSession::GetOrCreateConnectEthernetClientState(
   headers[":scheme"] = scheme;
   headers[":authority"] = authority;
   headers[":path"] = path;
+  AddAdditionalHeaders(headers, url);
   size_t bytes_sent =
       stream->SendRequest(std::move(headers), /*body=*/"", /*fin=*/false);
   if (bytes_sent == 0) {
@@ -677,6 +704,87 @@ quiche::QuicheIpAddress MasqueClientSession::GetFakeAddress(
 void MasqueClientSession::RemoveFakeAddress(
     const quiche::QuicheIpAddress& fake_address) {
   fake_addresses_.erase(fake_address.ToPackedString());
+}
+
+void MasqueClientSession::EnableSignatureAuth(absl::string_view key_id,
+                                              absl::string_view private_key,
+                                              absl::string_view public_key) {
+  QUICHE_CHECK(!key_id.empty());
+  QUICHE_CHECK_EQ(private_key.size(),
+                  static_cast<size_t>(ED25519_PRIVATE_KEY_LEN));
+  QUICHE_CHECK_EQ(public_key.size(),
+                  static_cast<size_t>(ED25519_PUBLIC_KEY_LEN));
+  signature_auth_key_id_ = key_id;
+  signature_auth_private_key_ = private_key;
+  signature_auth_public_key_ = public_key;
+}
+
+std::optional<std::string> MasqueClientSession::ComputeSignatureAuthHeader(
+    const QuicUrl& url) {
+  if (signature_auth_private_key_.empty()) {
+    return std::nullopt;
+  }
+  std::string scheme = url.scheme();
+  std::string host = url.host();
+  uint16_t port = url.port();
+  std::string realm = "";
+  std::string key_exporter_output;
+  std::string key_exporter_context = ComputeSignatureAuthContext(
+      kEd25519SignatureScheme, signature_auth_key_id_,
+      signature_auth_public_key_, scheme, host, port, realm);
+  if (!GetMutableCryptoStream()->ExportKeyingMaterial(
+          kSignatureAuthLabel, key_exporter_context, kSignatureAuthExporterSize,
+          &key_exporter_output)) {
+    QUIC_LOG(FATAL) << "Signature auth TLS exporter failed";
+    return std::nullopt;
+  }
+  QUICHE_CHECK_EQ(key_exporter_output.size(), kSignatureAuthExporterSize);
+  std::string signature_input =
+      key_exporter_output.substr(0, kSignatureAuthSignatureInputSize);
+  std::string verification = key_exporter_output.substr(
+      kSignatureAuthSignatureInputSize, kSignatureAuthVerificationSize);
+  std::string data_covered_by_signature =
+      SignatureAuthDataCoveredBySignature(signature_input);
+  uint8_t signature[ED25519_SIGNATURE_LEN];
+  if (ED25519_sign(
+          signature,
+          reinterpret_cast<const uint8_t*>(data_covered_by_signature.data()),
+          data_covered_by_signature.size(),
+          reinterpret_cast<const uint8_t*>(
+              signature_auth_private_key_.data())) != 1) {
+    QUIC_LOG(FATAL) << "Signature auth signature failed";
+    return std::nullopt;
+  }
+  return absl::StrCat(
+      "Signature k=", absl::WebSafeBase64Escape(signature_auth_key_id_),
+      ", a=", absl::WebSafeBase64Escape(signature_auth_public_key_), ", p=",
+      absl::WebSafeBase64Escape(absl::string_view(
+          reinterpret_cast<const char*>(signature), sizeof(signature))),
+      ", s=", kEd25519SignatureScheme,
+      ", v=", absl::WebSafeBase64Escape(verification));
+}
+
+void MasqueClientSession::AddAdditionalHeaders(spdy::Http2HeaderBlock& headers,
+                                               const QuicUrl& url) {
+  std::optional<std::string> signature_auth_header =
+      ComputeSignatureAuthHeader(url);
+  if (signature_auth_header.has_value()) {
+    headers["authorization"] = *signature_auth_header;
+  }
+  if (additional_headers_.empty()) {
+    return;
+  }
+  for (absl::string_view sp : absl::StrSplit(additional_headers_, ';')) {
+    quiche::QuicheTextUtils::RemoveLeadingAndTrailingWhitespace(&sp);
+    if (sp.empty()) {
+      continue;
+    }
+    std::vector<absl::string_view> kv =
+        absl::StrSplit(sp, absl::MaxSplits(':', 1));
+    quiche::QuicheTextUtils::RemoveLeadingAndTrailingWhitespace(&kv[0]);
+    quiche::QuicheTextUtils::RemoveLeadingAndTrailingWhitespace(&kv[1]);
+    headers[kv[0]] = kv[1];
+  }
 }
 
 }  // namespace quic
