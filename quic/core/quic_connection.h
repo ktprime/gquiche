@@ -648,18 +648,19 @@ class QUIC_EXPORT_PRIVATE QuicConnection final
   void SetSelfAddress(QuicSocketAddress address) {
     default_path_.self_address = address;
   }
-  //hybchanged
-  void SetPeerAddress(const QuicSocketAddress& address) {
-    default_path_.peer_address = address;
+
+  // The version of the protocol this connection is using.
+  QuicTransportVersion transport_version() const {
+    return framer_.transport_version();
   }
 
   //hybchanged
   // Update both connection's and packet creator's peer address.
   void UpdatePeerAddress(QuicSocketAddress peer_address);
 
-  // The version of the protocol this connection is using.
-  QuicTransportVersion transport_version() const {
-    return framer_.transport_version();
+  //hybchanged
+  void SetPeerAddress(const QuicSocketAddress& address) {
+    default_path_.peer_address = address;
   }
 
   ParsedQuicVersion version() const { return framer_.version(); }

@@ -222,13 +222,13 @@ class QUICHE_EXPORT QuicStream : public QuicStreamSequencer::StreamInterface {
   // is no longer interested in data being acked (which happens when
   // a stream is reset because of an error).
   bool IsWaitingForAcks() const;
-  // Number of bytes available to read. hybchanged
-  QuicByteCount ReadableBytes() const {
-    return sequencer_.ReadableBytes();
-  }
 
   QuicRstStreamErrorCode stream_error() const {
     return stream_error_.internal_code();
+  }
+
+  QuicByteCount ReadableBytes() const {
+    return sequencer_.ReadableBytes();
   }
   QuicErrorCode connection_error() const { return connection_error_; }
 
@@ -362,9 +362,10 @@ class QUICHE_EXPORT QuicStream : public QuicStreamSequencer::StreamInterface {
   // Commits data into the stream write buffer, and potentially sends it over
   // the wire.  This method has all-or-nothing semantics: if the write buffer is
   // not full, all of the memslices in |span| are moved into it; otherwise,
-  // nothing happens.
+  // nothing happens. If `buffer_unconditionally` is set to true, behaves
+  // similar to `WriteOrBufferData()` in terms of buffering.
   QuicConsumedData WriteMemSlices(absl::Span<quiche::QuicheMemSlice> span,
-                                  bool fin);
+                                  bool fin, bool buffer_uncondtionally = false);
   QuicConsumedData WriteMemSlice(quiche::QuicheMemSlice span, bool fin);
 
   // Returns true if any stream data is lost (including fin) and needs to be

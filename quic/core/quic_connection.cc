@@ -648,7 +648,7 @@ void QuicConnection::SetFromConfig(const QuicConfig& config) {
 
   if (version().HasIetfQuicFrames() &&
       config.HasReceivedPreferredAddressConnectionIdAndToken() &&
-      config.HasClientSentConnectionOption(kSPAD, perspective_)) {
+      config.SupportsServerPreferredAddress(perspective_)) {
     if (self_address().host().IsIPv4() &&
         config.HasReceivedIPv4AlternateServerAddress()) {
       received_server_preferred_address_ =
@@ -3531,13 +3531,18 @@ bool QuicConnection::WritePacket(SerializedPacket* packet) {
     return false;
   }
 
+  auto has_retransmittable_data = HAS_RETRANSMITTABLE_DATA;
+  if (packet->retransmittable_frames.empty())
+    has_retransmittable_data = packet->transmission_type != NOT_RETRANSMISSION ?
+    HAS_RETRANSMITTABLE_DATA : NO_RETRANSMITTABLE_DATA;
+
   if (result.status == WRITE_STATUS_OK) {
     // packet_send_time is the ideal send time, if allow_burst is true, writer
     // may have sent it earlier than that.
     packet_send_time = packet_send_time + result.send_time_offset;
   }
 
-  if (IsRetransmittable(*packet) == HAS_RETRANSMITTABLE_DATA &&
+  if (has_retransmittable_data == HAS_RETRANSMITTABLE_DATA &&
       !is_termination_packet) {
     // Start blackhole/path degrading detections if the sent packet is not
     // termination packet and contains retransmittable data.
@@ -3576,7 +3581,7 @@ bool QuicConnection::WritePacket(SerializedPacket* packet) {
       << " while current path has peer address " << peer_address();
   const bool in_flight = sent_packet_manager_.OnPacketSent(
       packet, packet_send_time, packet->transmission_type,
-      IsRetransmittable(*packet), /*measure_rtt=*/send_on_current_path,
+      has_retransmittable_data, /*measure_rtt=*/send_on_current_path,
       last_ecn_codepoint_sent_);
   QUIC_BUG_IF(quic_bug_12714_25,
               perspective_ == Perspective::IS_SERVER &&
@@ -3631,6 +3636,7 @@ bool QuicConnection::WritePacket(SerializedPacket* packet) {
 
   stats_.bytes_sent += encrypted_length;
   ++stats_.packets_sent;
+  stats_.stream_packets_sent += has_retransmittable_data;
   if (packet->has_ack_ecn) {
     stats_.num_ack_frames_sent_with_ecn++;
   }

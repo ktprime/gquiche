@@ -291,11 +291,11 @@ QuicStream::QuicStream(PendingStream* pending, QuicSession* session,
                        bool is_static)
     : QuicStream(
           pending->id_, session, std::move(pending->sequencer_), is_static,
-                 QuicUtils::GetStreamType(pending->id_, session->perspective(),
-                                          /*peer_initiated = */ true,
-                                          session->version()),
-                 pending->stream_bytes_read_, pending->fin_received_,
-                 std::move(pending->flow_controller_),
+          QuicUtils::GetStreamType(pending->id_, session->perspective(),
+                                   /*peer_initiated = */ true,
+                                   session->version()),
+          pending->stream_bytes_read_, pending->fin_received_,
+          std::move(pending->flow_controller_),
           pending->connection_flow_controller_,
           (session->GetClock()->ApproximateNow() - pending->creation_time())) {
   QUICHE_DCHECK(session->version().HasIetfQuicFrames());
@@ -763,7 +763,8 @@ QuicConsumedData QuicStream::WriteMemSlice(quiche::QuicheMemSlice span,
 }
 
 QuicConsumedData QuicStream::WriteMemSlices(
-    absl::Span<quiche::QuicheMemSlice> span, bool fin) {
+    absl::Span<quiche::QuicheMemSlice> span, bool fin,
+    bool buffer_unconditionally) {
   QuicConsumedData consumed_data(0, false);
   if (span.empty() && !fin) {
     QUIC_BUG(quic_bug_10586_6) << "span.empty() && !fin";
@@ -786,7 +787,7 @@ QuicConsumedData QuicStream::WriteMemSlices(
   }
 
   bool had_buffered_data = HasBufferedData();
-  if (CanWriteNewData() || span.empty()) {
+  if (CanWriteNewData() || span.empty() || buffer_unconditionally) {
     consumed_data.fin_consumed = fin;
     if (!span.empty()) {
       // Buffer all data if buffered data size is below limit.

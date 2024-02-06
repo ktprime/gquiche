@@ -23,8 +23,9 @@ struct QUICHE_EXPORT QuicConnectionStats {
 
   QuicByteCount bytes_sent = 0;  // Includes retransmissions.
   QuicPacketCount packets_sent = 0;
+  QuicPacketCount stream_packets_sent = 0;
   // Non-retransmitted bytes sent in a stream frame.
-  QuicByteCount stream_bytes_sent = 0;
+  //QuicByteCount stream_bytes_sent = 0;
   // Packets serialized and discarded before sending.
   QuicPacketCount packets_discarded = 0;
 
@@ -95,11 +96,10 @@ struct QUICHE_EXPORT QuicConnectionStats {
   // Count of times the loss detection alarm fired.  At least one packet should
   // be lost when the alarm fires.
   size_t loss_timeout_count = 0;
-  size_t tlp_count = 0;
-  size_t rto_count = 0;  // Count of times the rto timer fired.
   size_t pto_count = 0;
 
   int64_t min_rtt_us = 0;                 // Minimum RTT in microseconds.
+  int64_t mean_deviation = 0;             // Minimum RTT in microseconds.
   int64_t srtt_us = 0;                    // Smoothed RTT in microseconds.
   int64_t cwnd_bootstrapping_rtt_us = 0;  // RTT used in cwnd_bootstrapping.
   // The connection's |long_term_mtu_| used for sending packets, populated by
@@ -247,10 +247,11 @@ struct QUICHE_EXPORT QuicConnectionStats {
   // is performed by TlsServerHandshaker. If an operation is done within
   // BoringSSL, e.g. ticket decrypted without using
   // TlsServerHandshaker::SessionTicketOpen, it will not be recorded here.
+#if QUIC_TLS_SESSION
   std::optional<TlsServerOperationStats> tls_server_select_cert_stats;
   std::optional<TlsServerOperationStats> tls_server_compute_signature_stats;
   std::optional<TlsServerOperationStats> tls_server_decrypt_ticket_stats;
-
+#endif
   // The total number of streams which were pending from some time.
   size_t num_total_pending_streams = 0;
 };

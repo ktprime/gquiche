@@ -23,6 +23,7 @@
 #include "absl/cleanup/cleanup.h"
 #include "absl/strings/escaping.h"
 #include "absl/strings/numbers.h"
+#include "absl/strings/str_cat.h"
 #include "absl/strings/str_split.h"
 #include "absl/strings/string_view.h"
 #include "openssl/curve25519.h"
@@ -327,7 +328,7 @@ MasqueServerSession::MaybeCheckSignatureAuth(
                                       "Unexpected public key in header");
   }
   std::string realm = "";
-  QuicUrl url(authority, scheme);
+  QuicUrl url(absl::StrCat(scheme, "://", authority, "/"));
   std::optional<std::string> key_exporter_context = ComputeSignatureAuthContext(
       kEd25519SignatureScheme, *key_id, *header_public_key, scheme, url.host(),
       url.port(), realm);
@@ -335,6 +336,9 @@ MasqueServerSession::MaybeCheckSignatureAuth(
     return CreateBackendErrorResponse(
         "500", "Failed to generate key exporter context");
   }
+  QUIC_DVLOG(1) << "key_exporter_context: "
+                << absl::WebSafeBase64Escape(*key_exporter_context);
+  QUICHE_DCHECK(!key_exporter_context->empty());
   std::string key_exporter_output;
   if (!GetMutableCryptoStream()->ExportKeyingMaterial(
           kSignatureAuthLabel, *key_exporter_context,
@@ -344,14 +348,23 @@ MasqueServerSession::MaybeCheckSignatureAuth(
   QUICHE_CHECK_EQ(key_exporter_output.size(), kSignatureAuthExporterSize);
   std::string signature_input =
       key_exporter_output.substr(0, kSignatureAuthSignatureInputSize);
+  QUIC_DVLOG(1) << "signature_input: "
+                << absl::WebSafeBase64Escape(signature_input);
   std::string expected_verification = key_exporter_output.substr(
       kSignatureAuthSignatureInputSize, kSignatureAuthVerificationSize);
   if (verification != expected_verification) {
-    return CreateBackendErrorResponse(kSignatureAuthStatus,
-                                      "Unexpected verification");
+    return CreateBackendErrorResponse(
+        kSignatureAuthStatus,
+        absl::StrCat("Unexpected verification, expected ",
+                     absl::WebSafeBase64Escape(expected_verification),
+                     " but got ", absl::WebSafeBase64Escape(*verification),
+                     " - key exporter context was ",
+                     absl::WebSafeBase64Escape(*key_exporter_context)));
   }
   std::string data_covered_by_signature =
       SignatureAuthDataCoveredBySignature(signature_input);
+  QUIC_DVLOG(1) << "data_covered_by_signature: "
+                << absl::WebSafeBase64Escape(data_covered_by_signature);
   if (*signature_scheme != kEd25519SignatureScheme) {
     return CreateBackendErrorResponse(kSignatureAuthStatus,
                                       "Unexpected signature scheme");
@@ -376,58 +389,75 @@ MasqueServerSession::MaybeCheckSignatureAuth(
 std::unique_ptr<QuicBackendResponse> MasqueServerSession::HandleMasqueRequest(
     const spdy::Http2HeaderBlock& request_headers,
     QuicSimpleServerBackend::RequestHandler* request_handler) {
-  auto path_pair = request_headers.find(":path");
-  auto scheme_pair = request_headers.find(":scheme");
-  auto method_pair = request_headers.find(":method");
-  auto protocol_pair = request_headers.find(":protocol");
+  // Authority.
   auto authority_pair = request_headers.find(":authority");
-  if (path_pair == request_headers.end()) {
-    QUIC_DLOG(ERROR) << "MASQUE request is missing :path";
-    return CreateBackendErrorResponse("400", "Missing :path");
-  }
-  if (scheme_pair == request_headers.end()) {
-    QUIC_DLOG(ERROR) << "MASQUE request is missing :scheme";
-    return CreateBackendErrorResponse("400", "Missing :scheme");
-  }
-  if (method_pair == request_headers.end()) {
-    QUIC_DLOG(ERROR) << "MASQUE request is missing :method";
-    return CreateBackendErrorResponse("400", "Missing :method");
-  }
-  if (protocol_pair == request_headers.end()) {
-    QUIC_DLOG(ERROR) << "MASQUE request is missing :protocol";
-    return CreateBackendErrorResponse("400", "Missing :protocol");
-  }
   if (authority_pair == request_headers.end()) {
     QUIC_DLOG(ERROR) << "MASQUE request is missing :authority";
     return CreateBackendErrorResponse("400", "Missing :authority");
   }
-  absl::string_view path = path_pair->second;
-  absl::string_view scheme = scheme_pair->second;
-  absl::string_view method = method_pair->second;
-  absl::string_view protocol = protocol_pair->second;
   absl::string_view authority = authority_pair->second;
-  if (path.empty()) {
-    QUIC_DLOG(ERROR) << "MASQUE request with empty path";
-    return CreateBackendErrorResponse("400", "Empty path");
+  // Scheme.
+  auto scheme_pair = request_headers.find(":scheme");
+  if (scheme_pair == request_headers.end()) {
+    QUIC_DLOG(ERROR) << "MASQUE request is missing :scheme";
+    return CreateBackendErrorResponse("400", "Missing :scheme");
   }
+  absl::string_view scheme = scheme_pair->second;
   if (scheme.empty()) {
     return CreateBackendErrorResponse("400", "Empty scheme");
   }
-  if (method != "CONNECT") {
-    QUIC_DLOG(ERROR) << "MASQUE request with bad method \"" << method << "\"";
-    return CreateBackendErrorResponse("400", "Bad method");
-  }
-  if (protocol != "connect-udp" && protocol != "connect-ip" &&
-      protocol != "connect-ethernet") {
-    QUIC_DLOG(ERROR) << "MASQUE request with bad protocol \"" << protocol
-                     << "\"";
-    return CreateBackendErrorResponse("400", "Bad protocol");
-  }
-
+  // Signature authentication.
   auto signature_auth_reply = MaybeCheckSignatureAuth(
       request_headers, authority, scheme, request_handler);
   if (signature_auth_reply) {
     return signature_auth_reply;
+  }
+  // Path.
+  auto path_pair = request_headers.find(":path");
+  if (path_pair == request_headers.end()) {
+    QUIC_DLOG(ERROR) << "MASQUE request is missing :path";
+    return CreateBackendErrorResponse("400", "Missing :path");
+  }
+  absl::string_view path = path_pair->second;
+  if (path.empty()) {
+    QUIC_DLOG(ERROR) << "MASQUE request with empty path";
+    return CreateBackendErrorResponse("400", "Empty path");
+  }
+  // Method.
+  auto method_pair = request_headers.find(":method");
+  if (method_pair == request_headers.end()) {
+    QUIC_DLOG(ERROR) << "MASQUE request is missing :method";
+    return CreateBackendErrorResponse("400", "Missing :method");
+  }
+  absl::string_view method = method_pair->second;
+  if (method != "CONNECT") {
+    QUIC_DLOG(ERROR) << "MASQUE request with bad method \"" << method << "\"";
+    if (masque_server_backend_->IsSignatureAuthOnAllRequests()) {
+      return nullptr;
+    } else {
+      return CreateBackendErrorResponse("400", "Bad method");
+    }
+  }
+  // Protocol.
+  auto protocol_pair = request_headers.find(":protocol");
+  if (protocol_pair == request_headers.end()) {
+    QUIC_DLOG(ERROR) << "MASQUE request is missing :protocol";
+    if (masque_server_backend_->IsSignatureAuthOnAllRequests()) {
+      return nullptr;
+    } else {
+      return CreateBackendErrorResponse("400", "Missing :protocol");
+    }
+  }
+  absl::string_view protocol = protocol_pair->second;
+  if (protocol != "connect-udp" && protocol != "connect-ip" &&
+      protocol != "connect-ethernet") {
+    QUIC_DLOG(ERROR) << "MASQUE request with bad protocol \"" << protocol
+                     << "\"";
+    if (masque_server_backend_->IsSignatureAuthOnAllRequests()) {
+      return nullptr;
+    } else {
+      return CreateBackendErrorResponse("400", "Bad protocol");
+    }
   }
 
   if (protocol == "connect-ip") {

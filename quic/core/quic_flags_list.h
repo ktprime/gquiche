@@ -41,6 +41,8 @@ QUIC_FLAG(quic_reloadable_flag_quic_ignore_gquic_probing, true)
 QUIC_FLAG(quic_reloadable_flag_quic_enable_mtu_discovery_at_server, false)
 // If true, QuicGsoBatchWriter will support release time if it is available and the process has the permission to do so.
 QUIC_FLAG(quic_restart_flag_quic_support_release_time_for_gso, false)
+// If true, QuicSession will block outgoing control frames when the connection is closed.
+QUIC_FLAG(quic_reloadable_flag_quic_no_write_control_frame_upon_connection_close2, false)
 // If true, ack frequency frame can be sent from server to client.
 QUIC_FLAG(quic_reloadable_flag_quic_can_send_ack_frequency, true)
 // If true, allow client to enable BBRv2 on server via connection option \'B2ON\'.
@@ -76,7 +78,7 @@ QUIC_FLAG(quic_reloadable_flag_quic_skip_return_on_null_visitor, true)
 // If true, enable server retransmittable on wire PING.
 QUIC_FLAG(quic_reloadable_flag_quic_enable_server_on_wire_ping, true)
 // If true, fix a QUIC BBR2 bytes counting issue caused by spurious losses.
-QUIC_FLAG(quic_reloadable_flag_quic_bbr2_fix_spurious_loss_bytes_counting, false)
+QUIC_FLAG(quic_reloadable_flag_quic_bbr2_fix_spurious_loss_bytes_counting, true)
 // If true, include stream information in idle timeout connection close detail.
 QUIC_FLAG(quic_reloadable_flag_quic_add_stream_info_to_idle_close_detail, true)
 // If true, reject or send error response code upon receiving invalid request or response headers.

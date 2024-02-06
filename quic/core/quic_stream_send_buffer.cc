@@ -51,7 +51,6 @@ QuicStreamSendBuffer::QuicStreamSendBuffer(
     quiche::QuicheBufferAllocator* allocator)
     : current_end_offset_(0),
       stream_offset_(0),
-      //allocator_(allocator),
       stream_bytes_written_(0),
       stream_bytes_outstanding_(0),
       stream_bytes_start_(0) { }
@@ -66,8 +65,7 @@ QuicStreamSendBuffer::~QuicStreamSendBuffer() {
   blocks_.clear();
 }
 
-
-void QuicStreamSendBuffer::SaveStreamData(absl::string_view data) {
+void QuicStreamSendBuffer::SaveStreamData(std::string_view data) {
   QUICHE_DCHECK(!data.empty());
 
   // Latch the maximum data slice size.

@@ -795,6 +795,7 @@ bool CryptoUtils::GetSSLCapabilities(const SSL* ssl,
 #endif
   return true;
 }
+
 // static
 std::optional<std::string> CryptoUtils::GenerateProofPayloadToBeSigned(
     absl::string_view chlo_hash, absl::string_view server_config) {

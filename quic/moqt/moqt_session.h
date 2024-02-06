@@ -73,7 +73,7 @@ class QUICHE_EXPORT MoqtSession : public webtransport::SessionVisitor {
   void OnCanCreateNewOutgoingBidirectionalStream() override {}
   void OnCanCreateNewOutgoingUnidirectionalStream() override {}
 
-  void Error(absl::string_view error);
+  void Error(MoqtError code, absl::string_view error);
 
   quic::Perspective perspective() const { return parameters_.perspective; }
 
@@ -161,7 +161,8 @@ class QUICHE_EXPORT MoqtSession : public webtransport::SessionVisitor {
     void OnAnnounceErrorMessage(const MoqtAnnounceError& message) override;
     void OnUnannounceMessage(const MoqtUnannounce& /*message*/) override {}
     void OnGoAwayMessage(const MoqtGoAway& /*message*/) override {}
-    void OnParsingError(absl::string_view reason) override;
+    void OnParsingError(MoqtError error_code,
+                        absl::string_view reason) override;
 
     quic::Perspective perspective() const {
       return session_->parameters_.perspective;
@@ -172,7 +173,7 @@ class QUICHE_EXPORT MoqtSession : public webtransport::SessionVisitor {
    private:
     friend class test::MoqtSessionPeer;
     void SendSubscribeError(const MoqtSubscribeRequest& message,
-                            uint64_t error_code,
+                            SubscribeErrorCode error_code,
                             absl::string_view reason_phrase);
     bool CheckIfIsControlStream();
 

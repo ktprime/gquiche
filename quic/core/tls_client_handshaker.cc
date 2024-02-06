@@ -108,13 +108,6 @@ bool TlsClientHandshaker::CryptoConnect() {
       SSL_set_tlsext_host_name(ssl(), server_id_.host().c_str()) != 1) {
     return false;
   }
-#else
-  if (!server_id_.host().empty() &&
-      //(QuicHostnameUtils::IsValidSNI(server_id_.host()) ||
-       //   allow_invalid_sni_for_tests_) &&
-      SSL_set_tlsext_host_name(ssl(), server_id_.host().c_str()) != 1) {
-      return false;
-  }
 #endif
 
   if (!SetAlpn()) {

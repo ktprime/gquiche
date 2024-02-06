@@ -10,6 +10,7 @@ std::ostream& operator<<(std::ostream& os, const QuicConnectionStats& s) {
   //hybchanged simplicity
   //os << "{ bytes_sent: " << s.bytes_sent;
   os << " packets_sent: " << s.packets_sent;
+  os << " stream_packets_sent: " << s.stream_packets_sent;
   //if (s.stream_bytes_sent > 0)
   //os << " stream_bytes_sent: " << s.stream_bytes_sent;
   if (s.packets_discarded > 0)
@@ -22,9 +23,12 @@ std::ostream& operator<<(std::ostream& os, const QuicConnectionStats& s) {
   if (s.packets_retransmitted > 0) {
   os << " bytes_retransmitted: " << s.bytes_retransmitted;
   os << " packets_retransmitted: " << s.packets_retransmitted;
+  if (s.packet_spuriously_detected_lost) {
+  os << " packet_spuriously_detected_lost: " << s.packet_spuriously_detected_lost;
   os << " bytes_spuriously_retransmitted: " << s.bytes_spuriously_retransmitted;
   os << " packets_spuriously_retransmitted: "
      << s.packets_spuriously_retransmitted;
+  }
   }
   if (s.packets_lost)
   os << " packets_lost: " << s.packets_lost;
@@ -70,8 +74,8 @@ std::ostream& operator<<(std::ostream& os, const QuicConnectionStats& s) {
   if (s.num_path_response_received)
   os << " num_path_response_received: " << s.num_path_response_received;
   if (s.retry_packet_processed)
-  os << " retry_packet_processed: yes";
-
+  os << " retry_packet_processed: "
+     << (s.retry_packet_processed ? "yes" : "no");
   if (s.num_coalesced_packets_received)
   os << " num_coalesced_packets_received: " << s.num_coalesced_packets_received;
   if (s.num_coalesced_packets_processed)
@@ -84,6 +88,7 @@ std::ostream& operator<<(std::ostream& os, const QuicConnectionStats& s) {
   if (s.num_failed_authentication_packets_received)
   os << " num_failed_authentication_packets_received: "
      << s.num_failed_authentication_packets_received;
+#if 0
   if (s.num_tls_server_zero_rtt_packets_received_after_discarding_decrypter)
   os << " num_tls_server_zero_rtt_packets_received_after_discarding_decrypter: "
      << s.num_tls_server_zero_rtt_packets_received_after_discarding_decrypter;
@@ -92,7 +97,7 @@ std::ostream& operator<<(std::ostream& os, const QuicConnectionStats& s) {
      << s.address_validated_via_decrypting_packet;
   if (s.address_validated_via_token)
   os << " address_validated_via_token: " << s.address_validated_via_token;
-#if 0
+
   os << " server_preferred_address_validated: "
      << s.server_preferred_address_validated;
   os << " failed_to_validate_server_preferred_address: "
