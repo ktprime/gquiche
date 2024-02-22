@@ -2120,6 +2120,25 @@ bool QuicConnection::OnAckFrequencyFrame(const QuicAckFrequencyFrame& frame) {
   return true;
 }
 
+bool QuicConnection::OnResetStreamAtFrame(const QuicResetStreamAtFrame& frame) {
+  QUIC_BUG_IF(OnResetStreamAtFrame_connection_closed, !connected_)
+      << "Processing RESET_STREAM_AT frame while the connection is closed. "
+         "Received packet info: "
+      << last_received_packet_info_;
+
+  if (debug_visitor_ != nullptr) {
+    debug_visitor_->OnResetStreamAtFrame(frame);
+  }
+  if (!UpdatePacketContent(RESET_STREAM_AT_FRAME)) {
+    return false;
+  }
+
+  // TODO(b/278878322): implement.
+
+  MaybeUpdateAckTimeout();
+  return true;
+}
+
 bool QuicConnection::OnBlockedFrame(const QuicBlockedFrame& frame) {
   QUIC_BUG_IF(quic_bug_12714_17, !connected_)
       << "Processing BLOCKED frame when connection is closed. Received packet "
@@ -4562,7 +4581,7 @@ void QuicConnection::SendConnectionClosePacket(
     }
     QuicConnectionCloseFrame* const frame = new QuicConnectionCloseFrame(
         transport_version(), error, ietf_error, details,
-                                         framer_.current_received_frame_type());
+        framer_.current_received_frame_type());
     packet_creator_.ConsumeRetransmittableControlFrame(QuicFrame(frame));
     packet_creator_.FlushCurrentPacket();
     if (version().CanSendCoalescedPackets()) {
@@ -5711,8 +5730,23 @@ QuicPacketLength QuicConnection::GetGuaranteedLargestMessagePayload() const {
 
 uint32_t QuicConnection::cipher_id() const {
   if (version().KnowsWhichDecrypterToUse()) {
-    return framer_.GetDecrypter(last_received_packet_info_.decrypted_level)
-        ->cipher_id();
+    if (quic_limit_new_streams_per_loop_2_) {
+      QUIC_RELOADABLE_FLAG_COUNT_N(quic_limit_new_streams_per_loop_2, 4, 4);
+      for (auto decryption_level :
+           {ENCRYPTION_FORWARD_SECURE, ENCRYPTION_HANDSHAKE,
+            ENCRYPTION_ZERO_RTT, ENCRYPTION_INITIAL}) {
+        const QuicDecrypter* decrypter = framer_.GetDecrypter(decryption_level);
+        if (decrypter != nullptr) {
+          return decrypter->cipher_id();
+        }
+      }
+      QUICHE_BUG(no_decrypter_found)
+          << ENDPOINT << "No decrypter found at all encryption levels";
+      return 0;
+    } else {
+      return framer_.GetDecrypter(last_received_packet_info_.decrypted_level)
+          ->cipher_id();
+    }
   }
   return framer_.decrypter()->cipher_id();
 }
@@ -6676,6 +6710,10 @@ void QuicConnection::ValidatePath(
                                   context->peer_address(), client_connection_id,
                                   server_connection_id, stateless_reset_token);
   }
+  if (multi_port_stats_ != nullptr &&
+      reason == PathValidationReason::kMultiPort) {
+    multi_port_stats_->num_client_probing_attempts++;
+  }
   path_validator_.StartPathValidation(std::move(context),
                                       std::move(result_delegate), reason);
   if (perspective_ == Perspective::IS_CLIENT &&
@@ -7103,6 +7141,7 @@ void QuicConnection::OnMultiPortPathProbingSuccess(
   multi_port_probing_alarm_->Set(clock_->ApproximateNow() +
                                  multi_port_probing_interval_);
   if (multi_port_stats_ != nullptr) {
+    multi_port_stats_->num_successful_probes++;
     auto now = clock_->Now();
     auto time_delta = now - start_time;
     multi_port_stats_->rtt_stats.UpdateRtt(time_delta, QuicTime::Delta::Zero(),
@@ -7124,6 +7163,9 @@ void QuicConnection::MaybeProbeMultiPortPath() {
       !visitor_->ShouldKeepConnectionAlive() ||
       multi_port_probing_alarm_->IsSet()) {
     return;
+  }
+  if (multi_port_stats_ != nullptr) {
+    multi_port_stats_->num_client_probing_attempts++;
   }
   auto multi_port_validation_result_delegate =
       std::make_unique<MultiPortPathValidationResultDelegate>(this);

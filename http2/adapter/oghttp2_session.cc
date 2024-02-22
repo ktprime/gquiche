@@ -789,8 +789,7 @@ OgHttp2Session::SendResult OgHttp2Session::WriteForStream(
   }
 
   SendResult connection_can_write = SendResult::SEND_OK;
-  if (state.outbound_body == nullptr ||
-      (!options_.trailers_require_end_data && state.data_deferred)) {
+  if (state.outbound_body == nullptr || state.data_deferred) {
     // No data to send, but there might be trailers.
     if (state.trailers != nullptr) {
       // Trailers will include END_STREAM, so the data source can be discarded.
@@ -820,10 +819,10 @@ OgHttp2Session::SendResult OgHttp2Session::WriteForStream(
                    << " end_data: " << info.end_data
                    << " trailers: " << state.trailers.get();
     if (info.payload_length == 0 && !info.end_data &&
-        (options_.trailers_require_end_data || state.trailers == nullptr)) {
+        state.trailers == nullptr) {
       // An unproductive call to SelectPayloadLength() results in this stream
-      // entering the "deferred" state only if either no trailers are available
-      // to send, or trailers require an explicit end_data before being sent.
+      // entering the "deferred" state only if no trailers are available to
+      // send.
       state.data_deferred = true;
       break;
     } else if (info.payload_length == DataFrameSource::kError) {
@@ -870,11 +869,9 @@ OgHttp2Session::SendResult OgHttp2Session::WriteForStream(
       }
     }
     if (info.end_data ||
-        (info.payload_length == 0 && state.trailers != nullptr &&
-         !options_.trailers_require_end_data)) {
+        (info.payload_length == 0 && state.trailers != nullptr)) {
       // If SelectPayloadLength() returned {0, false}, and there are trailers to
-      // send, and the safety feature is disabled, it's okay to send the
-      // trailers.
+      // send, it's okay to send the trailers.
       if (state.trailers != nullptr) {
         auto block_ptr = std::move(state.trailers);
         if (info.send_fin) {
@@ -998,9 +995,7 @@ int OgHttp2Session::SubmitTrailer(Http2StreamId stream_id,
     // Save trailers so they can be written once data is done.
     state.trailers =
         std::make_unique<spdy::Http2HeaderBlock>(ToHeaderBlock(trailers));
-    if (!options_.trailers_require_end_data || !iter->second.data_deferred) {
-      trailers_ready_.insert(stream_id);
-    }
+    trailers_ready_.insert(stream_id);
   }
   return 0;
 }
@@ -1147,12 +1142,16 @@ void OgHttp2Session::OnStreamEnd(spdy::SpdyStreamId stream_id) {
 
 void OgHttp2Session::OnStreamPadLength(spdy::SpdyStreamId stream_id,
                                        size_t value) {
-  bool result = visitor_.OnDataPaddingLength(stream_id, 1 + value);
+  const size_t padding_length = 1 + value;
+  const bool result = visitor_.OnDataPaddingLength(stream_id, padding_length);
   if (!result) {
     fatal_visitor_callback_failure_ = true;
     decoder_.StopProcessing();
   }
-  MarkDataBuffered(stream_id, 1 + value);
+  connection_window_manager_.MarkWindowConsumed(padding_length);
+  if (auto it = stream_map_.find(stream_id); it != stream_map_.end()) {
+    it->second.window_manager.MarkWindowConsumed(padding_length);
+  }
 }
 
 void OgHttp2Session::OnStreamPadding(spdy::SpdyStreamId /*stream_id*/, size_t

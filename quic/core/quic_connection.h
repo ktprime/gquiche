@@ -34,6 +34,7 @@
 #include "quiche/quic/core/frames/quic_ack_frequency_frame.h"
 #include "quiche/quic/core/frames/quic_max_streams_frame.h"
 #include "quiche/quic/core/frames/quic_new_connection_id_frame.h"
+#include "quiche/quic/core/frames/quic_reset_stream_at_frame.h"
 #include "quiche/quic/core/quic_alarm.h"
 #include "quiche/quic/core/quic_alarm_factory.h"
 #include "quiche/quic/core/quic_blocked_writer_interface.h"
@@ -424,6 +425,9 @@ class QUICHE_EXPORT QuicConnectionDebugVisitor
   // Called when an AckFrequencyFrame has been parsed.
   virtual void OnAckFrequencyFrame(const QuicAckFrequencyFrame& /*frame*/) {}
 
+  // Called when a ResetStreamAtFrame has been parsed.
+  virtual void OnResetStreamAtFrame(const QuicResetStreamAtFrame& /*frame*/) {}
+
   // Called when |count| packet numbers have been skipped.
   virtual void OnNPacketNumbersSkipped(QuicPacketCount /*count*/,
                                        QuicTime /*now*/) {}
@@ -517,6 +521,10 @@ class QUIC_EXPORT_PRIVATE QuicConnection final
     size_t num_multi_port_probe_failures_when_path_degrading = 0;
     // number of total multi-port path creations in a connection
     size_t num_multi_port_paths_created = 0;
+    // number of client probing attempts.
+    size_t num_client_probing_attempts = 0;
+    // number of successful probes.
+    size_t num_successful_probes = 0;
   };
 
   // Sets connection parameters from the supplied |config|.
@@ -722,6 +730,7 @@ class QUIC_EXPORT_PRIVATE QuicConnection final
   bool OnMessageFrame(const QuicMessageFrame& frame) override;
   bool OnHandshakeDoneFrame(const QuicHandshakeDoneFrame& frame) override;
   bool OnAckFrequencyFrame(const QuicAckFrequencyFrame& frame) override;
+  bool OnResetStreamAtFrame(const QuicResetStreamAtFrame& frame) override;
   void OnPacketComplete() override;
   bool IsValidStatelessResetToken(
       const StatelessResetToken& token) const override;
@@ -1350,6 +1359,10 @@ class QUIC_EXPORT_PRIVATE QuicConnection final
 
   QuicEcnCodepoint ecn_codepoint() const {
     return packet_writer_params_.ecn_codepoint;
+  }
+
+  bool quic_limit_new_streams_per_loop_2() const {
+    return quic_limit_new_streams_per_loop_2_;
   }
 
  protected:
@@ -2422,6 +2435,9 @@ class QUIC_EXPORT_PRIVATE QuicConnection final
   // The ECN codepoint of the last packet to be sent to the writer, which
   // might be different from the next codepoint in per_packet_options_.
   QuicEcnCodepoint last_ecn_codepoint_sent_ = ECN_NOT_ECT;
+
+  const bool quic_limit_new_streams_per_loop_2_ =
+      GetQuicReloadableFlag(quic_limit_new_streams_per_loop_2);
 };
 
 }  // namespace quic
